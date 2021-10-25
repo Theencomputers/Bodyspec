@@ -1,0 +1,13 @@
+name: bodyspec
+main: me.theencomputers.bodyspec.Main
+version: 0.0.0
+commands:
+   bodyspecadmin:
+      description: Admin commands for the bodyspectating plugin
+      usage: /bodyspecsync
+   bodyspec:
+      description: Allows you to spectate your teammates after death
+      usage: /bodyspectate <player>
+   bodyspecleave:
+      description: Makes you leave bodyspectating mode
+      usage: /bodyspecleave <player>
