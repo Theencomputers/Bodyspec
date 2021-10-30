@@ -44,7 +44,9 @@ public class Main extends JavaPlugin implements Listener{
 		  Bukkit.getServer().getConsoleSender().sendMessage("In Join event");
 		  Player p = e.getPlayer();
 		  if(inbodyspec.containsKey(p.getName().toString())) {
+			  //if the spectator logs back in this will reset them
 	    		Player target = Bukkit.getServer().getPlayer(inbodyspec.get(p.getName().toString()));
+	    		inbodyspec.remove(p.getName().toString());
 				Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
 				    @Override
 				    public void run() {
@@ -69,6 +71,7 @@ public class Main extends JavaPlugin implements Listener{
 	    		Player spectator = Bukkit.getServer().getPlayer(beingspecced.get(p.getName()));
 	    		spectator.teleport(spectator.getBedSpawnLocation());
 	    		spectator.setGameMode(GameMode.SURVIVAL);
+	    		beingspecced.remove(p.getName().toString());
 	    		inbodyspec.remove(spectator.getName().toString());
 	    		spectator.sendMessage(ChatColor.RED + "The player you where spectating logged out");
 
@@ -90,6 +93,17 @@ public class Main extends JavaPlugin implements Listener{
 			  e.setTo(Bukkit.getPlayer(inbodyspec.get(p.getName().toString())).getLocation());
 			  p.setSpectatorTarget(Bukkit.getPlayer(inbodyspec.get(p.getName().toString())));
 			  }
+		  else if (beingspecced.containsKey(p.getName().toString())) {
+			  Player spec = Bukkit.getServer().getPlayer(beingspecced.get(p.getName().toString()));
+			  spec.setSpectatorTarget(null);
+			  spec.teleport(p.getLocation());
+				Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
+				    @Override
+			    public void run() {
+		    		p.setSpectatorTarget(p);							    }
+			}, 5L);
+			  
+		  }
 	  }
 	  @EventHandler
 	  	public void leaveBodySpec(PlayerToggleSneakEvent e) {
