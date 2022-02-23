@@ -8,6 +8,7 @@
 
 package me.theencomputers.bodyspec;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -29,15 +30,19 @@ import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.plugin.java.JavaPlugin;
  
 
-public class Main extends JavaPlugin implements Listener{
+public class main extends JavaPlugin implements Listener{
 		//Honestly there are probably better ways to do this but this is the bes I know how
 	private Map<String, String> playersToTeamName = new HashMap<String, String>(10);			//Hashmap stores all the players as keys and all the team names as values
 	private Map<String, String> inBodySpecToTarget = new HashMap<String, String>(10);		//Hashmap stores everyone in bodyspec mode as key and the person they are bodyspectating as value
 	private Map<String, String> targetToInBodySpec = new HashMap<String, String>(10);		//Hashmap sames as inBodySpecToTarget but reversed: target as key and spectator as value
-	private Map<String, String> deadList = new HashMap<String, String>(10);				//Hasmap that stores all the dead players as key and nothing for value needs to be made more efficent
-	private Map<String, String> optOutList = new HashMap<String, String>(10);			//Hashmap that stores all the optouts as key and nothing as value needs to be turned into a storage file to hold all opt outs
+//	private Map<String, String> deadList = new HashMap<String, String>(10);				//Hasmap that stores all the dead players as key and nothing for value needs to be made more efficent
+//	private Map<String, String> optOutList = new HashMap<String, String>(10);			//Hashmap that stores all the optouts as key and nothing as value needs to be turned into a storage file to hold all opt outs
+	ArrayList<String> optOutList= new ArrayList<String>();
+	ArrayList<String> deadList= new ArrayList<String>();
+
 
 	static boolean isDeathRemoveOn = true;	//bool that is true if players are auto removed after death
+	static boolean isBodyspecEnabled = true;
 
 	public void onEnable(){
 		Bukkit.getServer().getConsoleSender().sendMessage("sanity test"); //debug message feel free to remove
@@ -53,7 +58,8 @@ public class Main extends JavaPlugin implements Listener{
 		p.sendMessage("you died!");	//debug message
 		if(isDeathRemoveOn) {
 			p.sendMessage("you have been added to dead list");	//debug message
-			deadList.put(p.getName().toString(), "dead"); //Adds them to the dead list allowing them to bodyspec
+			deadList.add(p.getName().toString());	//NEW
+//			deadList.put(p.getName().toString(), "dead"); //Adds them to the dead list allowing them to bodyspec		REPLACED WITH NEW LIST
 		  	}
 
 		}
@@ -64,6 +70,7 @@ public class Main extends JavaPlugin implements Listener{
 		Bukkit.getServer().getConsoleSender().sendMessage("In Join event");	//debug message
 		Player p = e.getPlayer();
 
+		if(isBodyspecEnabled){
 		if(inBodySpecToTarget.containsKey(p.getName().toString())) {	//check if player is in bodyspec			ADD CHECK FOR TARGET LOGGING OUT
 			  //if the spectator logs back in this will reset them
 	    	Player target = Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getName().toString()));
@@ -86,6 +93,13 @@ public class Main extends JavaPlugin implements Listener{
 			}, 5L);		//wait 5 ticks to put them in spec mode to handle tp delay
 
 
+		}
+		}
+		else{		//handle bodyspec being disabled when a spec logs out
+			inBodySpecToTarget.remove(p.getName().toString());
+			p.setSpectatorTarget(null);
+			p.teleport(p.getBedSpawnLocation());	//temporary easy for testing
+			p.setGameMode(GameMode.SURVIVAL);
 		}
 	}
 	@EventHandler
@@ -156,8 +170,37 @@ public class Main extends JavaPlugin implements Listener{
 	public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 		if (cmd.getName().equalsIgnoreCase("bodyspecadmin")) {	//bodyspec admin command
 
-			if(args.length > 0) {	//check if they typed anything more than just /bodyspecadmin
+			if(args.length > 0) {	//check if they typed anything more than just /bodyspecadmin 
 
+				if (args[0].equalsIgnoreCase("enable") || args[0].equalsIgnoreCase("on")) {			//enable bodyspec
+					if(sender.isOp()){																//FIXME	remove once permissions are fixed
+						isBodyspecEnabled = true;
+						sender.sendMessage(ChatColor.GREEN + "Bodyspec has been is enabled");
+					}
+					else{
+						sender.sendMessage(ChatColor.RED + "You do not have permission to do this");
+					}
+				}
+				if (args[0].equalsIgnoreCase("disable") || args[0].equalsIgnoreCase("off")) {		//enable bodyspec
+					if(sender.isOp()){																//FIXME	remove once permissions are fixed
+						isBodyspecEnabled = false;
+						sender.sendMessage(ChatColor.RED + "Bodyspec has been is disabled");
+						for (Player iPlayer : Bukkit.getOnlinePlayers()) {		//loop through all players and see if they are in bodyspec if yes remove them
+							if(inBodySpecToTarget.containsKey(iPlayer.getName().toString())){
+								inBodySpecToTarget.remove(iPlayer.getName().toString());
+								iPlayer.setSpectatorTarget(null);
+								iPlayer.teleport(iPlayer.getBedSpawnLocation());	//temporary easy for testing
+								iPlayer.setGameMode(GameMode.SURVIVAL);
+								iPlayer.sendMessage(ChatColor.RED + "Sorry! Body Spectating has been disabled");
+							}
+
+						}
+
+					}
+					else{
+						sender.sendMessage(ChatColor.RED + "You do not have permission to do this");
+					}
+				}
 				if (args[0].equalsIgnoreCase("sync")) {	//for sync
 
 					if (args.length == 2) { //if we are syncing an individual player eg latescatter /bodyspecadmin theencomputers
@@ -183,7 +226,7 @@ public class Main extends JavaPlugin implements Listener{
 
 				 	else if (args.length == 1) {		//in case the command is /bodyspecadmin sync this syncs all players
 						playersToTeamName.clear();	//clear hasmap
-						deadList.clear();			//clear list
+						deadList.clear();			//clear list		NEW actually not new
 		 				for (Player iPlayer : Bukkit.getOnlinePlayers()) {	//iterates through all players setting them to iPlayer
 //			 				try {playersToTeamName.remove(iPlayer.getPlayer().getName().toString());}	//commented as this is likely not needed
 //			 				catch(Exception e) {}
@@ -206,12 +249,14 @@ public class Main extends JavaPlugin implements Listener{
 			if(args.length == 2 && args[0].equalsIgnoreCase("setdead")) {	//for /bodyspecadmin setdead <player>
 				OfflinePlayer p = Bukkit.getOfflinePlayer(args[1]);		//offline player incase the player doesnt exist
 				try {	//remove incase player is already dead
-					deadList.remove(p.getName());
+					deadList.remove(p.getName().toString());	//NEW
 				}
 				catch(Exception e) {}
 
 				try {		//put in dead list
-					deadList.put(p.getName(), "dead");
+					//deadList.put(p.getName(), "dead");		//OLD
+					deadList.add(p.getName().toString());		//NEW
+
 				 	sender.sendMessage(ChatColor.GREEN + "Player has been set to dead");}
 				catch(Exception e) {
 					sender.sendMessage(ChatColor.RED + "Could not find Player");	//player doesnt exist
@@ -269,7 +314,7 @@ public class Main extends JavaPlugin implements Listener{
 		}
 				    
 
-		if (cmd.getName().equalsIgnoreCase("bodyspecleave")) {		//for command /bodyspecleave
+		if (cmd.getName().equalsIgnoreCase("bodyspecleave")) {		//for command /bodyspecleave  FIXME give this messages and logic
 				//handle player leaving bodyspec
 			if(sender instanceof Player) {
 				Player p = (Player) sender; //requires cast to player
@@ -285,11 +330,13 @@ public class Main extends JavaPlugin implements Listener{
 		if (cmd.getName().equalsIgnoreCase("bodyspecoptout")) {		//for command /bodyspecoptout to comply with advisories rules
 
 			if(sender instanceof Player) {
-				if(optOutList.containsKey(sender.getName().toString())) {	//check if they have already opted out
+				//if(optOutList.containsKey(sender.getName().toString())) {	//check if they have already opted out 		OLD
+				if(optOutList.contains(sender.getName().toString())) {		//NEW
 					sender.sendMessage(ChatColor.RED + "You have already opted out of bodyspectating. To opt back in do /bodyspecoptin");
 				}
 				else {
-					optOutList.put(sender.getName().toString(), "optout");		//meaningless value NEEDS TO BE UPDATED
+			//		optOutList.put(sender.getName().toString(), "optout");		//meaningless value NEEDS TO BE UPDATED		OLD
+					optOutList.add(sender.getName().toString());		//NEW
 					sender.sendMessage(ChatColor.RED + "You have opted out of bodyspectating. To opt back in do /bodyspecoptin");
 				}
 			 		
@@ -300,8 +347,9 @@ public class Main extends JavaPlugin implements Listener{
 		if (cmd.getName().equalsIgnoreCase("bodyspecoptin")) {
 
 			if(sender instanceof Player) {
-				if(optOutList.containsKey(sender.getName().toString())) {		//see if they have opted out
-					optOutList.remove(sender.getName().toString());		//remove them from optout list
+				//if(optOutList.containsKey(sender.getName().toString())) {		//see if they have opted out		OLD
+				if(optOutList.contains(sender.getName().toString())) {		//NEW
+					optOutList.remove(sender.getName().toString());		//remove them from optout list		OLD actually not
 					sender.sendMessage(ChatColor.GREEN + "You have opted in! You may now be body spectated by teammates. To opt back out do /bodyspecoptout");
 				}
 				else {		//they have not opted out do this
@@ -312,13 +360,16 @@ public class Main extends JavaPlugin implements Listener{
 
 		if (cmd.getName().equalsIgnoreCase("bodyspec")) {	//for the command /bodyspec
 
+			if(isBodyspecEnabled){
+
 			if(args.length == 1) { //is true when there is one argument eg /bodyspec theencomputers
 
 					if(sender instanceof Player) {
 
 						Player p = (Player) sender;
 
-						if(deadList.containsKey(p.getName().toString())) {		//see if deadlist contains player name
+						//if(deadList.containsKey(p.getName().toString())) {		//see if deadlist contains player name		OLD
+						if(deadList.contains(p.getName().toString())) {		//NEW
 
 							String teamName;
 
@@ -335,7 +386,8 @@ public class Main extends JavaPlugin implements Listener{
 
 				    					if(teamName.equals(playersToTeamName.get(target.getName().toString()))){	//see if they are on the same team
 
-				    						if(!optOutList.containsKey(target.toString())) {	//check if player has not opted out to comply with uhc rules
+				    						//if(!optOutList.containsKey(target.toString())) {	//check if player has not opted out to comply with uhc rules		OLD
+											if(!optOutList.contains(target.toString())) {	//NEW
 
 				    							inBodySpecToTarget.put(p.getName().toString(), target.getName().toString());		//add player to hashmap with value target
 				    							targetToInBodySpec.put(target.getName().toString(), p.getName().toString());		//add target to hashmapa with value player
@@ -375,7 +427,10 @@ public class Main extends JavaPlugin implements Listener{
 			else {		//in case they inputed too many arguments
 				sender.sendMessage(ChatColor.RED + "Error usage: /bodyspec <player>");
 			}
-				 				    
+		}	
+		else{
+			sender.sendMessage(ChatColor.RED + "Bodyspec is currently diabled");
+		}			 				    
 		}
  		return true;
 	  
@@ -387,19 +442,20 @@ public class Main extends JavaPlugin implements Listener{
 
 /*		TO-DO
 	- add optout file
+	- bodyspec alert target
 	- remove debug messages
 	- add configuration file
 		-add configurable spawn and logout handler
 	- make sure player cannot escape spectator mode
 	- thourogh testing
-	- re do maps to avoid meaningless values
+	- re do maps to avoid meaningless values **added untested**
 	- add check for target logged out when logging back in
 	- do someting about highlight players
 	- add permissions
-	- bodyspec disable
+	- bodyspec disable **added untested old statements commented**
 
 
-			FEATURES
+			FEATURES TO ADD
 	- shift spec among teammates
 	- inventory viewer
 	- allow admin to force bodyspec
