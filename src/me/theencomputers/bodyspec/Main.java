@@ -32,7 +32,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  
 
 public class main extends JavaPlugin implements Listener{
-		//Honestly there are probably better ways to do this but this is the best I know how
+		//Honestly there are probably better ways to do this but this is the bes I know how
 	private Map<String, String> playersToTeamName = new HashMap<String, String>(10);			//Hashmap stores all the players as keys and all the team names as values
 	private Map<String, String> inBodySpecToTarget = new HashMap<String, String>(10);		//Hashmap stores everyone in bodyspec mode as key and the person they are bodyspectating as value
 	private Map<String, String> targetToInBodySpec = new HashMap<String, String>(10);		//Hashmap sames as inBodySpecToTarget but reversed: target as key and spectator as value
@@ -46,6 +46,8 @@ public class main extends JavaPlugin implements Listener{
 	static boolean isBodyspecEnabled = true;
 
 private void removeFromBodyspec(String player){		//function that removes a player from bodyspectating
+	OfflinePlayer oPlayer = Bukkit.getServer().getOfflinePlayer(player.toString());
+	if(oPlayer.isOnline()){
 	try {
 		Player p = Bukkit.getServer().getPlayer(player);
 		if(inBodySpecToTarget.containsKey(p.getName().toString())){
@@ -62,7 +64,17 @@ private void removeFromBodyspec(String player){		//function that removes a playe
 	} catch (Exception e) {
 		//TODO: handle exception
 	}
-
+}
+	else{
+		try {
+			oPlayer.getPlayer().setSpectatorTarget(null);
+			oPlayer.getPlayer().teleport(oPlayer.getPlayer().getBedSpawnLocation());	//temporary easy for testing
+			oPlayer.getPlayer().setGameMode(GameMode.SURVIVAL);
+			inBodySpecToTarget.remove(oPlayer.getName().toString());
+		} catch (Exception e) {
+			//TODO: handle exception
+		}
+	}
 }
 private void putInBodySpec(String spectator, String target){
 	try {
@@ -117,27 +129,37 @@ private void putInBodySpec(String spectator, String target){
 		Bukkit.getServer().getConsoleSender().sendMessage("In Join event");	//debug message
 		Player p = e.getPlayer();
 
-		if(isBodyspecEnabled){
 		if(inBodySpecToTarget.containsKey(p.getName().toString())) {	//check if player is in bodyspec			ADD CHECK FOR TARGET LOGGING OUT
+			Player target = Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getName().toString()));
+			if(isBodyspecEnabled && target.isOnline()){
 			  //if the spectator logs back in this will reset them
-	    	Player target = Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getName().toString()));
+			p.sendMessage(p.getName().toString() + target.getName().toString());
 	    	//inBodySpecToTarget.remove(p.getName().toString());	//remove them from hashmap commenting bc I think this is an error
 				putInBodySpec(p.getName().toString(), target.getName().toString());
-		}
-		}
-		else{		//handle bodyspec being disabled when a spec logs out
+			}
+			else{		//handle bodyspec being disabled when a spec logs out
 				removeFromBodyspec(p.getName().toString());
-		}
+	}
+}
+
+
 	}
 	@EventHandler
 	public void playerLeave(PlayerQuitEvent e) {	//handle target logging out
 		Bukkit.getServer().getConsoleSender().sendMessage("In Quit event");	//debug message
-		Player p = e.getPlayer();
+		OfflinePlayer p = e.getPlayer();
 
 		if(targetToInBodySpec.containsKey(p.getName().toString())) {	//see if the player that logged out was being specced
-	    	Player spectator = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName()));	//if so bring them back to spawn
-			removeFromBodyspec(spectator.getName().toString());
-	    	spectator.sendMessage(ChatColor.RED + "The player you where spectating logged out");	//tell the player what happened
+			OfflinePlayer spectator = Bukkit.getOfflinePlayer(targetToInBodySpec.get(p.getName()));	//offline players in case the player they typed doesnt exist
+			if(spectator.isOnline()){
+	    		Player onlineSpectator = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName()));	//if so bring them back to spawn
+				removeFromBodyspec(spectator.getName().toString());
+	    		onlineSpectator.sendMessage(ChatColor.RED + "The player you where spectating logged out");	//tell the player what happened
+			}
+		}
+		else if(inBodySpecToTarget.containsKey(p.getName().toString())){
+			removeFromBodyspec(p.getName());
+
 		}
 
 	}
@@ -162,18 +184,28 @@ private void putInBodySpec(String spectator, String target){
 		}
 
 		else if (targetToInBodySpec.containsKey(p.getName().toString())) {		//this accounts for nether and other teleport delay glitch
+
 			Player spec = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName().toString()));
-			spec.setSpectatorTarget(null);		//set null to reset their spectator
+			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
+
+				@Override
+					public void run() {
+						spec.setFlySpeed(0);
+					}
+				}, 5L);		//wait 5 ticks to tp reset them as spectator
 			spec.teleport(p.getLocation());		//tp them to their target
+			spec.setSpectatorTarget(null);		//set null to reset their spectator
 			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
 
 			@Override
 			    public void run() {
-		    		p.setSpectatorTarget(p);
+					spec.setSpectatorTarget(null);		//set null to reset their spectator
+		    		spec.setSpectatorTarget(p);
 				}
-			}, 5L);		//wait 5 ticks to tp reset them as spectator
-			  
+			}, 10L);		//wait 5 ticks to tp reset them as spectator
+			
 		}
+		
 	}
 
 	@EventHandler
@@ -397,7 +429,7 @@ private void putInBodySpec(String spectator, String target){
 						Player p = (Player) sender;
 
 						//if(deadList.containsKey(p.getName().toString())) {		//see if deadlist contains player name		OLD
-						if(deadList.contains(p.getName().toString())) {		//NEW
+						if(deadList.contains(p.getName().toString())) { //NEW works
 
 							String teamName;
 
@@ -407,13 +439,13 @@ private void putInBodySpec(String spectator, String target){
 								teamName = playersToTeamName.get(p.getName().toString());	//set team name to the value of the hashmap
 								Player target = Bukkit.getServer().getPlayer(args[0]);
 				    			if(target.isOnline()) {	//see if the player is online 
-									if(!deadList.contains(target.getName().toString())){
+									if(!deadList.contains(target.getName().toString())){	//NEW works
 				    				if(playersToTeamName.containsKey(target.getName().toString())) {		//see if target is on the same team first see if it exists
 
 				    					if(teamName.equals(playersToTeamName.get(target.getName().toString()))){	//see if they are on the same team
 
 				    						//if(!optOutList.containsKey(target.toString())) {	//check if player has not opted out to comply with uhc rules		OLD
-											if(!optOutList.contains(target.getName().toString())) {	//NEW											
+											if(!optOutList.contains(target.getName().toString())) {	//NEW			untested								
 												putInBodySpec(p.getName().toString(), target.getName().toString());
 				    						}
 				    						else {	//in case target is opted out
@@ -459,18 +491,21 @@ private void putInBodySpec(String spectator, String target){
 
 
 /*		TO-DO
+		FIXME: 	error when spectator logs out then target logs out, and when spectator logs back in 
+	- fix issue with spec logging not always putting them into spec add delay
+	- make toggle sneak resync spec if they glitch out and always cancel
 	- add optout file
-	- bodyspec alert target **added tested works**
+	- bodyspec alert target **added tested fully working**
 	- remove debug messages
 	- add configuration file
 		-add configurable spawn and logout handler
-	- make sure player cannot escape spectator mode
-	- thourogh testing
-	- re do maps to avoid meaningless values **added mostly works issue with it allowing you to body spec the dead**
-	- add check for target logged out when spec logging back in
+	- make sure player cannot escape spectator mode	**tested works except when target teleporting**
+	- thourogh testing	**last completed 02-24-2022**
+	- re do maps to avoid meaningless values **added untested**
+	- add check for target logged out when logging back in
 	- do someting about highlight players
 	- add permissions
-	- bodyspec disable **added tested working fully**
+	- bodyspec disable **added works test disabling and relogging**
 
 
 			FEATURES TO ADD
