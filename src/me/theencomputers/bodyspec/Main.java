@@ -1,13 +1,14 @@
 /* 
 	Title: bodyspec
 	Author: Theencomputers
-	Last Updated: 02-17-2022
+	Last Updated: 05-20-2022
 	Version: 0.0.1
 */
 
 
 package me.theencomputers.bodyspec;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -15,45 +16,173 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.Sound;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.plugin.java.JavaPlugin;
- 
+import org.bukkit.scheduler.BukkitRunnable;
 
-public class Main extends JavaPlugin implements Listener{
+import org.bukkit.craftbukkit.v1_8_R3.entity.CraftPlayer;
+import io.netty.channel.*;
+import net.minecraft.server.v1_8_R3.PacketPlayOutPlayerInfo;
+
+public class main extends JavaPlugin implements Listener{
 		//Honestly there are probably better ways to do this but this is the bes I know how
 	private Map<String, String> playersToTeamName = new HashMap<String, String>(10);			//Hashmap stores all the players as keys and all the team names as values
 	private Map<String, String> inBodySpecToTarget = new HashMap<String, String>(10);		//Hashmap stores everyone in bodyspec mode as key and the person they are bodyspectating as value
 	private Map<String, String> targetToInBodySpec = new HashMap<String, String>(10);		//Hashmap sames as inBodySpecToTarget but reversed: target as key and spectator as value
-	private Map<String, String> deadList = new HashMap<String, String>(10);				//Hasmap that stores all the dead players as key and nothing for value needs to be made more efficent
-	private Map<String, String> optOutList = new HashMap<String, String>(10);			//Hashmap that stores all the optouts as key and nothing as value needs to be turned into a storage file to hold all opt outs
+	ArrayList<String> optOutList= new ArrayList<String>();
+	ArrayList<String> deadList= new ArrayList<String>();
+
 
 	static boolean isDeathRemoveOn = true;	//bool that is true if players are auto removed after death
+	static boolean isBodyspecEnabled = true;
+
+private void removeFromBodyspec(String player){		//function that removes a player from bodyspectating
+	OfflinePlayer oPlayer = Bukkit.getServer().getOfflinePlayer(player.toString());
+	if(oPlayer.isOnline()){
+	try {
+		Player p = Bukkit.getServer().getPlayer(player);
+		if(inBodySpecToTarget.containsKey(p.getName().toString())){
+		try {
+			targetToInBodySpec.remove(inBodySpecToTarget.get(p.getName().toString()));
+		} catch (Exception e) {
+		}
+			inBodySpecToTarget.remove(p.getName().toString());
+			p.setSpectatorTarget(null);
+			p.performCommand("spawn");
+			p.setGameMode(GameMode.SURVIVAL);
+			p.setFlySpeed(0.3F);
+			p.setFlying(false);
+		}
+	} catch (Exception e) {
+		//TODO: handle exception
+	}
+}
+	else{
+		try {
+			oPlayer.getPlayer().setSpectatorTarget(null);
+			//handle offline player
+			oPlayer.getPlayer().setGameMode(GameMode.SURVIVAL);
+			inBodySpecToTarget.remove(oPlayer.getName().toString());
+		} catch (Exception e) {
+			//TODO: handle exception
+		}
+	}
+}
+private void putInBodySpec(String spectator, String target){
+	try {
+		Player p = Bukkit.getServer().getPlayer(spectator);
+		Player tPlayer = Bukkit.getServer().getPlayer(target);
+
+
+		tPlayer.sendMessage(ChatColor.RED + "You are being body spectated by " + p.getName().toString() + " if you do not wish to be body spectated please do /bodyspecoptout!");
+		tPlayer.playSound(p.getLocation(), Sound.LEVEL_UP, 2F, 1F);		//play sound and send a message to alert the player that they are being bodyspecced		NEW
+
+		inBodySpecToTarget.put(p.getName().toString(), tPlayer.getName().toString());		//add player to hashmap with value target
+		targetToInBodySpec.put(tPlayer.getName().toString(), p.getName().toString());		//add target to hashmapa with value player
+
+		p.setGameMode(GameMode.ADVENTURE);
+		//put them in bodyspec
+		new BukkitRunnable() {
+			int iteration = 1;
+			public void run() {
+				if(iteration == 1){
+					blockPackets(p);
+					p.setGameMode(GameMode.SPECTATOR);
+					p.setFlySpeed(0);
+					p.setSpectatorTarget(null);
+					p.teleport(tPlayer.getLocation());
+				}
+				if(iteration == 2){
+					p.setSpectatorTarget(tPlayer);
+					cancel();
+				}
+				iteration++;
+			}
+		}.runTaskTimer(this, 1, 5);
+	} catch (Exception e) {
+		//TODO: handle exception
+	}
+}
+
 
 	public void onEnable(){
 		Bukkit.getServer().getConsoleSender().sendMessage("sanity test"); //debug message feel free to remove
-
 	 	Bukkit.getServer().getPluginManager().registerEvents((Listener)this, this); //set event listener to this class
 	 	this.getCommand("bodyspec").setExecutor(this);	//set command executor to this class
 	    
 	 	
 	}
+
+    private void blockPackets(Player player) {
+        ChannelDuplexHandler channelDuplexHandler = new ChannelDuplexHandler() {
+
+            @Override
+            public void write(ChannelHandlerContext channelHandlerContext, Object packet, ChannelPromise channelPromise) throws Exception {
+                if(packet instanceof PacketPlayOutPlayerInfo){	
+					stopBlockingPacket(player);
+					return;
+				}
+                super.write(channelHandlerContext, packet, channelPromise);
+            }
+
+        };
+
+        ChannelPipeline pipeline = ((CraftPlayer) player).getHandle().playerConnection.networkManager.channel.pipeline();
+        pipeline.addBefore("packet_handler", player.getName(), channelDuplexHandler);
+    }
+	private void stopBlockingPacket(Player player) {
+        Channel channel = ((CraftPlayer) player).getHandle().playerConnection.networkManager.channel;
+        channel.eventLoop().submit(() -> {
+            channel.pipeline().remove(player.getName());
+            return null;
+        });
+    }
+	@EventHandler
+	public void playerClick(PlayerInteractEvent e) {
+		Player p = e.getPlayer();
+		if(inBodySpecToTarget.containsKey(e.getPlayer().getName().toString())){
+			e.setCancelled(true);
+			//putInBodySpec(e.getPlayer().getName(), inBodySpecToTarget.get(e.getPlayer().getName().toString()));
+			Player target = Bukkit.getPlayer(inBodySpecToTarget.get(e.getPlayer().getName().toString()));
+			new BukkitRunnable() {
+				int iteration = 1;
+				public void run() {
+					if(iteration == 1){
+						p.setSpectatorTarget(null);
+						p.teleport(target.getLocation());
+					}
+					if(iteration == 2){
+						p.setSpectatorTarget(target);
+						cancel();
+					}
+					iteration++;
+				}
+			}.runTaskTimer(this, 1, 5);
+		}
+
+	}
 	@EventHandler
 	public void playerDeath(PlayerDeathEvent e) {	//fired when player dies and adds them to the death list if 
 		Player p = e.getEntity().getPlayer();
-		p.sendMessage("you died!");	//debug message
+		if(targetToInBodySpec.containsKey(p.getName().toString())){
+			removeFromBodyspec(targetToInBodySpec.get(p.getName().toString()));
+			Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName().toString())).sendMessage(ChatColor.RED + "The person you were body spectating died.");
+
+		}
 		if(isDeathRemoveOn) {
-			p.sendMessage("you have been added to dead list");	//debug message
-			deadList.put(p.getName().toString(), "dead"); //Adds them to the dead list allowing them to bodyspec
+			deadList.add(p.getName().toString());
 		  	}
 
 		}
@@ -61,81 +190,108 @@ public class Main extends JavaPlugin implements Listener{
 
 	@EventHandler
 	public void playerJoin(PlayerJoinEvent e) {	//fired on joining to handle a spectator that relogged
-		Bukkit.getServer().getConsoleSender().sendMessage("In Join event");	//debug message
+		//Bukkit.getServer().getConsoleSender().sendMessage("In Join event");	//debug message
 		Player p = e.getPlayer();
 
 		if(inBodySpecToTarget.containsKey(p.getName().toString())) {	//check if player is in bodyspec			ADD CHECK FOR TARGET LOGGING OUT
+			Player target = Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getName().toString()));
+			if(isBodyspecEnabled && target.isOnline()){
 			  //if the spectator logs back in this will reset them
-	    	Player target = Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getName().toString()));
-	    	//inBodySpecToTarget.remove(p.getName().toString());	//remove them from hashmap commenting bc I think this is an error
-			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
-
-				    @Override
-				    public void run() {
-			    		p.teleport(target.getLocation());
-			    		p.setGameMode(GameMode.SPECTATOR);
-						    }
-				}, 10L);	//wait 10 ticks to handle login delay
-				
-			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
-				
-				    @Override
-				    public void run() {
-			    	p.setSpectatorTarget(target);							   
-				}
-			}, 5L);		//wait 5 ticks to put them in spec mode to handle tp delay
+			p.sendMessage(p.getName().toString() + target.getName().toString());
+			putInBodySpec(p.getName().toString(), target.getName().toString());
+			}
+			else{		//handle bodyspec being disabled when a spec logs out
+				removeFromBodyspec(p.getName().toString());
+	}
+}
 
 
-		}
 	}
 	@EventHandler
 	public void playerLeave(PlayerQuitEvent e) {	//handle target logging out
-		Bukkit.getServer().getConsoleSender().sendMessage("In Quit event");	//debug message
-		Player p = e.getPlayer();
+		//Bukkit.getServer().getConsoleSender().sendMessage("In Quit event");	//debug message
+		OfflinePlayer p = e.getPlayer();
 
 		if(targetToInBodySpec.containsKey(p.getName().toString())) {	//see if the player that logged out was being specced
-	    	Player spectator = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName()));	//if so bring them back to spawn
-	    	spectator.teleport(spectator.getBedSpawnLocation());		//temporary for testing change to something configurable
-	    	spectator.setGameMode(GameMode.SURVIVAL);
-	    	targetToInBodySpec.remove(p.getName().toString());
-	    	inBodySpecToTarget.remove(spectator.getName().toString());
-	    	spectator.sendMessage(ChatColor.RED + "The player you where spectating logged out");	//tell the player what happened
+			OfflinePlayer spectator = Bukkit.getOfflinePlayer(targetToInBodySpec.get(p.getName()));	//offline players in case the player they typed doesnt exist
+			if(spectator.isOnline()){
+	    		Player onlineSpectator = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName()));	//if so bring them back to spawn
+				removeFromBodyspec(spectator.getName().toString());
+	    		onlineSpectator.sendMessage(ChatColor.RED + "The player you where spectating logged out");	//tell the player what happened
+			}
+		}
+		else if(inBodySpecToTarget.containsKey(p.getName().toString())){
+			removeFromBodyspec(p.getName());
+
 		}
 
 	}
 
-	@EventHandler
-	public void specTeleporterUse(InventoryClickEvent e) {		//Prevent the player from using spectator shortcuts 		NOT WORKING!
-		Player p = (Player) e.getWhoClicked();
-//		  p.sendMessage("clicked");		//debug message
-		if(p.getOpenInventory() == null && inBodySpecToTarget.containsKey(p.getName().toString())) {
-			e.setCancelled(true);
-		  }
-	}
 
 	@EventHandler
-	public void specTeleport(PlayerTeleportEvent e) {		//prevent the player from using spec shortcuts	also handles nether and ender pearl tp delay 		KINDA WORKING!
+	public void teleportEvent(PlayerTeleportEvent e) {		//prevent the player from using spec shortcuts	also handles nether and ender pearl tp delay 		KINDA WORKING!
 		Player p = e.getPlayer();
 
-		if(e.getCause().toString().equals("SPECTATE") && (inBodySpecToTarget.containsKey(p.getName().toString()))) {	//issue lies here spec tp doesnt always return SPECTATE
+
+		if(e.getCause().equals(TeleportCause.NETHER_PORTAL)){			//sketchy fix for nether woosh glitch
+			if(targetToInBodySpec.containsKey(p.getName().toString())){
+				Player spec = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName().toString()));
+				Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
+
+					@Override
+						public void run() {
+							spec.teleport(p.getLocation());
+						}
+					}, 40L);
+					Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
+
+						@Override
+							public void run() {
+								spec.setSpectatorTarget(null);
+								spec.setSpectatorTarget(p);
+							}
+						}, 45L);
+			}
+		}
+		else if(e.getCause().toString().equals("SPECTATE") && (inBodySpecToTarget.containsKey(p.getName().toString()))) {	//issue lies here spec tp doesnt always return SPECTATE
 			e.setCancelled(true);
 			e.setTo(Bukkit.getPlayer(inBodySpecToTarget.get(p.getName().toString())).getLocation());
 			p.setSpectatorTarget(Bukkit.getPlayer(inBodySpecToTarget.get(p.getName().toString())));
 		}
 
 		else if (targetToInBodySpec.containsKey(p.getName().toString())) {		//this accounts for nether and other teleport delay glitch
+
 			Player spec = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName().toString()));
 			spec.setSpectatorTarget(null);		//set null to reset their spectator
-			spec.teleport(p.getLocation());		//tp them to their target
+			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
+
+				@Override
+					public void run() {
+						spec.teleport(p.getLocation());		//tp them to their target
+					}
+				}, 5L);		//wait 5 ticks to tp reset them as spectator
 			Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
 
 			@Override
 			    public void run() {
-		    		p.setSpectatorTarget(p);
+					spec.setSpectatorTarget(null);		//set null to reset their spectator
+		    		spec.setSpectatorTarget(p);
 				}
-			}, 5L);		//wait 5 ticks to tp reset them as spectator
-			  
+			}, 10L);		//wait 5 ticks to tp reset them as spectator
+			
 		}
+		
+	}
+
+	@EventHandler
+	public void clickEvent(PlayerInteractEvent e){		//prevent the player from using spec shortcuts	also handles nether and ender pearl tp delay 		KINDA WORKING!
+		Player p = e.getPlayer();
+
+		if(inBodySpecToTarget.containsKey(p.getUniqueId().toString()) && p.getGameMode().equals(GameMode.SPECTATOR)){
+			p.setSpectatorTarget(null);
+			p.setSpectatorTarget(Bukkit.getServer().getPlayer(inBodySpecToTarget.get(p.getUniqueId().toString())));
+		}
+		
 	}
 
 	@EventHandler
@@ -155,9 +311,43 @@ public class Main extends JavaPlugin implements Listener{
 	@SuppressWarnings("deprecation")		//bukkit doesnt like getPlayer I will use uuids in the future but names are easier for testing
 	public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
 		if (cmd.getName().equalsIgnoreCase("bodyspecadmin")) {	//bodyspec admin command
+			if(!sender.isOp()){
+				if(sender instanceof Player){
+					Player sPlayer = (Player) sender;
+					if(!sPlayer.hasPermission("bodyspec.admin"))
+						sender.sendMessage(ChatColor.RED + "Sorry! you do not have permission to use this command");
+						return true;
+				}
+			}
 
-			if(args.length > 0) {	//check if they typed anything more than just /bodyspecadmin
+			if(args.length > 0) {	//check if they typed anything more than just /bodyspecadmin 
 
+				if (args[0].equalsIgnoreCase("enable") || args[0].equalsIgnoreCase("on")) {			//enable bodyspec
+					if(sender.isOp()){																//FIXME	remove once permissions are fixed
+						isBodyspecEnabled = true;
+						sender.sendMessage(ChatColor.GREEN + "Bodyspec has been is enabled");
+					}
+					else{
+						sender.sendMessage(ChatColor.RED + "You do not have permission to do this");
+					}
+				}
+				if (args[0].equalsIgnoreCase("disable") || args[0].equalsIgnoreCase("off")) {		//enable bodyspec
+					if(sender.isOp()){																//FIXME	remove once permissions are fixed
+						isBodyspecEnabled = false;
+						sender.sendMessage(ChatColor.RED + "Bodyspec has been is disabled");
+						for (Player iPlayer : Bukkit.getOnlinePlayers()) {		//loop through all players and see if they are in bodyspec if yes remove them
+							if(inBodySpecToTarget.containsKey(iPlayer.getName().toString())){
+								removeFromBodyspec(iPlayer.getName().toString());
+								iPlayer.sendMessage(ChatColor.RED + "Sorry! Body Spectating has been disabled");
+							}
+
+						}
+
+					}
+					else{
+						sender.sendMessage(ChatColor.RED + "You do not have permission to do this");
+					}
+				}
 				if (args[0].equalsIgnoreCase("sync")) {	//for sync
 
 					if (args.length == 2) { //if we are syncing an individual player eg latescatter /bodyspecadmin theencomputers
@@ -170,7 +360,7 @@ public class Main extends JavaPlugin implements Listener{
 
 					    try{	//try to add player
 							playersToTeamName.put(p.getPlayer().getName().toString(), p.getPlayer().getScoreboard().getPlayerTeam(p.getPlayer()).toString());
-					    	sender.sendMessage(ChatColor.GREEN + "Successifully synced player named " + p.getPlayer().getDisplayName());
+					    	sender.sendMessage(ChatColor.GREEN + "Successfully synced player named " + p.getPlayer().getDisplayName());
 					    }
 					    catch (Exception e) {	//if it fails then the player doesnt exist
 					    	if(p.isOnline()) {
@@ -183,14 +373,14 @@ public class Main extends JavaPlugin implements Listener{
 
 				 	else if (args.length == 1) {		//in case the command is /bodyspecadmin sync this syncs all players
 						playersToTeamName.clear();	//clear hasmap
-						deadList.clear();			//clear list
+						deadList.clear();			//clear list		NEW actually not new
 		 				for (Player iPlayer : Bukkit.getOnlinePlayers()) {	//iterates through all players setting them to iPlayer
-//			 				try {playersToTeamName.remove(iPlayer.getPlayer().getName().toString());}	//commented as this is likely not needed
-//			 				catch(Exception e) {}
+						//			 				try {playersToTeamName.remove(iPlayer.getPlayer().getName().toString());}	//commented as this is likely not needed
+						//			 				catch(Exception e) {}
 
 					    	try{		//try and catch incase player is a solo
 								playersToTeamName.put(iPlayer.getPlayer().getName().toString(), iPlayer.getPlayer().getScoreboard().getPlayerTeam(iPlayer.getPlayer()).toString());
-					    		sender.sendMessage(ChatColor.GREEN + "Successifully synced player named " + iPlayer.getPlayer().getDisplayName());		//debug message
+					    		sender.sendMessage(ChatColor.GREEN + "Successfully synced player named " + iPlayer.getPlayer().getDisplayName());		//debug message
 					    	}
 					    	catch (Exception e) {
 								sender.sendMessage(ChatColor.RED + iPlayer.getName() + " is a solo");	//debug message
@@ -206,12 +396,14 @@ public class Main extends JavaPlugin implements Listener{
 			if(args.length == 2 && args[0].equalsIgnoreCase("setdead")) {	//for /bodyspecadmin setdead <player>
 				OfflinePlayer p = Bukkit.getOfflinePlayer(args[1]);		//offline player incase the player doesnt exist
 				try {	//remove incase player is already dead
-					deadList.remove(p.getName());
+					deadList.remove(p.getName().toString());	//NEW
 				}
 				catch(Exception e) {}
 
 				try {		//put in dead list
-					deadList.put(p.getName(), "dead");
+					//deadList.put(p.getName(), "dead");		//OLD
+					deadList.add(p.getName().toString());		//NEW
+
 				 	sender.sendMessage(ChatColor.GREEN + "Player has been set to dead");}
 				catch(Exception e) {
 					sender.sendMessage(ChatColor.RED + "Could not find Player");	//player doesnt exist
@@ -269,15 +461,17 @@ public class Main extends JavaPlugin implements Listener{
 		}
 				    
 
-		if (cmd.getName().equalsIgnoreCase("bodyspecleave")) {		//for command /bodyspecleave
+		if (cmd.getName().equalsIgnoreCase("bodyspecleave")) {		//for command /bodyspecleave  FIXME give this messages and logic
 				//handle player leaving bodyspec
 			if(sender instanceof Player) {
 				Player p = (Player) sender; //requires cast to player
-				inBodySpecToTarget.remove(p.getName().toString());
-				p.setSpectatorTarget(null);
-				p.teleport(p.getBedSpawnLocation());	//temporary easy for testing
-				p.setGameMode(GameMode.SURVIVAL);
+			if(inBodySpecToTarget.containsKey(p.getName().toString())){
+				removeFromBodyspec(p.getName().toString());
 //				p.openInventory(p.getInventory());			//expirimental
+			}
+			else{
+				p.sendMessage(ChatColor.RED + "You are not bodyspectating anyone");
+			}
 			}
 				    
 		}
@@ -285,12 +479,19 @@ public class Main extends JavaPlugin implements Listener{
 		if (cmd.getName().equalsIgnoreCase("bodyspecoptout")) {		//for command /bodyspecoptout to comply with advisories rules
 
 			if(sender instanceof Player) {
-				if(optOutList.containsKey(sender.getName().toString())) {	//check if they have already opted out
+				//if(optOutList.containsKey(sender.getName().toString())) {	//check if they have already opted out 		OLD
+				if(optOutList.contains(sender.getName().toString())) {		//NEW
 					sender.sendMessage(ChatColor.RED + "You have already opted out of bodyspectating. To opt back in do /bodyspecoptin");
 				}
 				else {
-					optOutList.put(sender.getName().toString(), "optout");		//meaningless value NEEDS TO BE UPDATED
+			//		optOutList.put(sender.getName().toString(), "optout");		//meaningless value NEEDS TO BE UPDATED		OLD
+					optOutList.add(sender.getName().toString());		//NEW
 					sender.sendMessage(ChatColor.RED + "You have opted out of bodyspectating. To opt back in do /bodyspecoptin");
+					Player p = (Player) sender;
+					if(targetToInBodySpec.containsKey(p.getName().toString())){
+						Player rPlayer = Bukkit.getServer().getPlayer(targetToInBodySpec.get(p.getName().toString()));
+						removeFromBodyspec(rPlayer.getName().toString());
+				}	
 				}
 			 		
 				}
@@ -300,8 +501,9 @@ public class Main extends JavaPlugin implements Listener{
 		if (cmd.getName().equalsIgnoreCase("bodyspecoptin")) {
 
 			if(sender instanceof Player) {
-				if(optOutList.containsKey(sender.getName().toString())) {		//see if they have opted out
-					optOutList.remove(sender.getName().toString());		//remove them from optout list
+				//if(optOutList.containsKey(sender.getName().toString())) {		//see if they have opted out		OLD
+				if(optOutList.contains(sender.getName().toString())) {		//NEW
+					optOutList.remove(sender.getName().toString());		//remove them from optout list		OLD actually not
 					sender.sendMessage(ChatColor.GREEN + "You have opted in! You may now be body spectated by teammates. To opt back out do /bodyspecoptout");
 				}
 				else {		//they have not opted out do this
@@ -312,44 +514,39 @@ public class Main extends JavaPlugin implements Listener{
 
 		if (cmd.getName().equalsIgnoreCase("bodyspec")) {	//for the command /bodyspec
 
+			if(isBodyspecEnabled){
+				if(!sender.isOp())
+					if(sender instanceof Player){
+						if(!sender.hasPermission("bodyspec.use")){
+							sender.sendMessage(ChatColor.RED + "Sorry! you do not have permission to use that command!");
+						}
+					}
+
 			if(args.length == 1) { //is true when there is one argument eg /bodyspec theencomputers
 
 					if(sender instanceof Player) {
 
 						Player p = (Player) sender;
 
-						if(deadList.containsKey(p.getName().toString())) {		//see if deadlist contains player name
+						//if(deadList.containsKey(p.getName().toString())) {		//see if deadlist contains player name		OLD
+						if(deadList.contains(p.getName().toString())) { //NEW works
 
 							String teamName;
 
 							if(playersToTeamName.containsKey(p.getName().toString())) {		
 
-								sender.sendMessage("contains" );		//debug message
+								//sender.sendMessage("contains" );		//debug message
 								teamName = playersToTeamName.get(p.getName().toString());	//set team name to the value of the hashmap
-
-				    			if(Bukkit.getServer().getPlayer(args[0]).isOnline()) {	//see if the player is online 
-
-				    				Player target = Bukkit.getServer().getPlayer(args[0]);
-
+								Player target = Bukkit.getServer().getPlayer(args[0]);
+				    			if(target.isOnline()) {	//see if the player is online 
+									if(!deadList.contains(target.getName().toString())){	//NEW works
 				    				if(playersToTeamName.containsKey(target.getName().toString())) {		//see if target is on the same team first see if it exists
 
 				    					if(teamName.equals(playersToTeamName.get(target.getName().toString()))){	//see if they are on the same team
 
-				    						if(!optOutList.containsKey(target.toString())) {	//check if player has not opted out to comply with uhc rules
-
-				    							inBodySpecToTarget.put(p.getName().toString(), target.getName().toString());		//add player to hashmap with value target
-				    							targetToInBodySpec.put(target.getName().toString(), p.getName().toString());		//add target to hashmapa with value player
-									    		//put them in bodyspec
-												p.setGameMode(GameMode.SPECTATOR);
-					    						p.setSpectatorTarget(null);
-									    		p.teleport(target.getLocation());
-												Bukkit.getScheduler().scheduleSyncDelayedTask(this, new Runnable() {
-
-							 				  	@Override
-							    					public void run() {
-						    							p.setSpectatorTarget(target);
-											    	}
-												}, 5L);	//5 tick delay for tp delay
+				    						//if(!optOutList.containsKey(target.toString())) {	//check if player has not opted out to comply with uhc rules		OLD
+											if(!optOutList.contains(target.getName().toString())) {	//NEW			untested								
+												putInBodySpec(p.getName().toString(), target.getName().toString());
 				    						}
 				    						else {	//in case target is opted out
 												sender.sendMessage(ChatColor.RED + "That player is not allowing others to bodyspec them if this is a mistake ask them to do /bodyspecoptin");
@@ -360,46 +557,50 @@ public class Main extends JavaPlugin implements Listener{
 											sender.sendMessage(ChatColor.RED + "Sorry, you can only bodyspectate teammates.");
 										}
 				    				}
+								}//new
+								else{
+									sender.sendMessage(ChatColor.RED + "Error: You cannot bodyspectate a dead player");
+								}
 				    			}
+								else{
+									sender.sendMessage(ChatColor.RED + "Error: player is offline");
+								}
 							}
 						}
 					 	else {		//in case it is preformed by the console
-							 sender.sendMessage(ChatColor.RED + "This command must be preformed in-game" );
+							sender.sendMessage("You cannot Preform this command whilist alive");
 						}
 						
 					}
 					else {		//in case the player is still alive and trying to bodyspec while alive
-						sender.sendMessage("You cannot Preform this command whilist alive");
+						sender.sendMessage(ChatColor.RED + "This command must be preformed in-game" );
 					}
 			}
-			else {		//in case they inputed too many arguments
+			else {	//in case they inputed too many arguments
 				sender.sendMessage(ChatColor.RED + "Error usage: /bodyspec <player>");
 			}
-				 				    
+
+	}	
+		else{
+			sender.sendMessage(ChatColor.RED + "Bodyspec is currently diabled");
+		}			 				    
 		}
  		return true;
-	  
-
 	}
 }
 
 
 
 /*		TO-DO
-	- add optout file
-	- remove debug messages
+	- make toggle sneak resync spec if they glitch out and always cancel
 	- add configuration file
 		-add configurable spawn and logout handler
-	- make sure player cannot escape spectator mode
 	- thourogh testing
-	- re do maps to avoid meaningless values
-	- add check for target logged out when logging back in
-	- do someting about highlight players
 	- add permissions
-	- bodyspec disable
+	- bodyspec disable **added untested old statements commented**
 
 
-			FEATURES
+			FEATURES TO ADD
 	- shift spec among teammates
 	- inventory viewer
 	- allow admin to force bodyspec
