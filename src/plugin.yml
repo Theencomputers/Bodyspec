@@ -1,0 +1,19 @@
+name: bodyspec
+main: me.theencomputers.bodyspec.Launcher
+version: 0.1.0
+commands:
+   bodyspecadmin:
+      description: Admin commands for the bodyspectating plugin
+      usage: /bodyspecadmin
+   bodyspec:
+      description: Allows you to spectate your teammates after death
+      usage: /bodyspectate <player>
+   bodyspecleave:
+      description: Makes you leave bodyspectating mode
+      usage: /bodyspecleave <player>
+   bodyspecoptin:
+      description: Opt-in for body spectating to allow your teammates to spectate you after death
+      usage: /bodyspecoptin
+   bodyspecoptout:
+      description: Opt-out of body spectating to prevent your teammates from spectating you after death
+      usage: /bodyspecleave <player>
